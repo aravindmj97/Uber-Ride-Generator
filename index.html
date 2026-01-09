@@ -76,32 +76,38 @@
             </div>
 
             <!-- Custom Pickup Area (Hidden by default) -->
-            <div id="pickup-custom-area" class="hidden space-y-3">
-                <div class="flex gap-2">
-                    <input type="text" id="pickup-search" placeholder="Search (e.g., Central Park)" class="flex-1 p-3 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-black outline-none">
+            <div id="pickup-custom-area" class="hidden space-y-3 relative z-20">
+                <div class="flex gap-2 relative">
+                    <input type="text" id="pickup-search" oninput="handleSearchInput(this.value, 'pickup')" autocomplete="off" placeholder="Search (e.g., Central Park)" class="flex-1 p-3 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-black outline-none">
                     <button onclick="searchLocation('pickup')" class="bg-gray-200 text-black px-4 rounded-lg hover:bg-gray-300">
                         <i class="fa-solid fa-magnifying-glass"></i>
                     </button>
                 </div>
-                <div id="pickup-map" class="map-container border border-gray-300"></div>
+                <!-- Suggestions Dropdown -->
+                <div id="pickup-suggestions" class="absolute w-full bg-white shadow-xl rounded-lg mt-1 max-h-60 overflow-y-auto hidden border border-gray-100 z-30"></div>
+                
+                <div id="pickup-map" class="map-container border border-gray-300 z-10 relative"></div>
                 <p id="pickup-status" class="text-xs text-gray-500 italic">Search or tap map to select.</p>
             </div>
         </section>
 
         <!-- STEP 2: DROP OFF -->
-        <section class="bg-white rounded-xl shadow-sm border border-gray-100 p-5 mb-4">
+        <section class="bg-white rounded-xl shadow-sm border border-gray-100 p-5 mb-4 relative z-10">
             <h2 class="text-lg font-bold mb-4 flex items-center gap-2">
                 <i class="fa-solid fa-flag-checkered text-red-600"></i> 2. Destination
             </h2>
 
-            <div class="space-y-3">
-                <div class="flex gap-2">
-                    <input type="text" id="dropoff-search" placeholder="Search destination..." class="flex-1 p-3 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-black outline-none">
+            <div class="space-y-3 relative">
+                <div class="flex gap-2 relative z-20">
+                    <input type="text" id="dropoff-search" oninput="handleSearchInput(this.value, 'dropoff')" autocomplete="off" placeholder="Search destination..." class="flex-1 p-3 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-black outline-none">
                     <button onclick="searchLocation('dropoff')" class="bg-gray-200 text-black px-4 rounded-lg hover:bg-gray-300">
                         <i class="fa-solid fa-magnifying-glass"></i>
                     </button>
                 </div>
-                <div id="dropoff-map" class="map-container border border-gray-300"></div>
+                <!-- Suggestions Dropdown -->
+                <div id="dropoff-suggestions" class="absolute w-full bg-white shadow-xl rounded-lg mt-1 top-12 max-h-60 overflow-y-auto hidden border border-gray-100 z-30"></div>
+
+                <div id="dropoff-map" class="map-container border border-gray-300 z-10 relative"></div>
                 <p id="dropoff-status" class="text-xs text-gray-500 italic">Search or tap map to select.</p>
             </div>
         </section>
@@ -112,7 +118,7 @@
         </button>
 
         <!-- RESULTS SECTION (Hidden Initially) -->
-        <div id="result-section" class="hidden mt-6 animate-fade-in">
+        <div id="result-section" class="hidden mt-6 animate-fade-in pb-10">
             
             <!-- Quick Actions -->
             <div class="grid grid-cols-2 gap-3 mb-6">
@@ -204,6 +210,7 @@
 
         let mapPickup, mapDropoff;
         let markerPickup, markerDropoff;
+        let debounceTimer;
 
         // --- Initialization ---
         document.addEventListener('DOMContentLoaded', () => {
@@ -217,8 +224,12 @@
 
             // Initialize Pickup Map
             mapPickup = L.map('pickup-map').setView(defaultView, 13);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '© OpenStreetMap'
+            
+            // Google Maps Layer (Roadmap)
+            L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+                maxZoom: 20,
+                subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+                attribution: '&copy; Google Maps'
             }).addTo(mapPickup);
             
             mapPickup.on('click', (e) => {
@@ -227,8 +238,12 @@
 
             // Initialize Dropoff Map
             mapDropoff = L.map('dropoff-map').setView(defaultView, 13);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '© OpenStreetMap'
+            
+            // Google Maps Layer (Roadmap)
+            L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+                maxZoom: 20,
+                subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+                attribution: '&copy; Google Maps'
             }).addTo(mapDropoff);
 
             mapDropoff.on('click', (e) => {
@@ -256,7 +271,6 @@
                 
                 let address = "Selected Location";
                 if(data && data.address) {
-                    // Try to construct a short meaningful address
                     address = data.address.road || data.address.building || data.display_name.split(',')[0];
                 }
 
@@ -282,9 +296,77 @@
                 document.getElementById('dropoff-status').innerText = `Selected: ${address}`;
                 document.getElementById('dropoff-search').value = address;
             }
+            // Hide suggestions if they are open
+            document.getElementById(`${type}-suggestions`).classList.add('hidden');
         }
 
-        // --- Search Functionality ---
+        // --- Autocomplete & Search Logic ---
+
+        function handleSearchInput(query, type) {
+            clearTimeout(debounceTimer);
+            
+            if (!query || query.length < 3) {
+                document.getElementById(`${type}-suggestions`).classList.add('hidden');
+                return;
+            }
+
+            debounceTimer = setTimeout(() => {
+                fetchSuggestions(query, type);
+            }, 300); // Wait 300ms after typing stops
+        }
+
+        async function fetchSuggestions(query, type) {
+            try {
+                const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5`);
+                const results = await response.json();
+                renderSuggestions(results, type);
+            } catch (error) {
+                console.error("Autosuggest error:", error);
+            }
+        }
+
+        function renderSuggestions(results, type) {
+            const container = document.getElementById(`${type}-suggestions`);
+            container.innerHTML = '';
+            
+            if (results.length === 0) {
+                container.classList.add('hidden');
+                return;
+            }
+
+            results.forEach(place => {
+                const div = document.createElement('div');
+                div.className = "p-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-0 text-sm flex items-center gap-2";
+                
+                // Icon
+                const icon = document.createElement('i');
+                icon.className = "fa-solid fa-location-dot text-gray-400";
+                
+                // Text
+                const text = document.createElement('span');
+                text.innerText = place.display_name;
+                text.className = "truncate";
+
+                div.appendChild(icon);
+                div.appendChild(text);
+                
+                div.onclick = () => {
+                    const lat = parseFloat(place.lat);
+                    const lon = parseFloat(place.lon);
+                    const shortName = place.display_name.split(',')[0];
+                    
+                    const map = type === 'pickup' ? mapPickup : mapDropoff;
+                    map.setView([lat, lon], 16);
+                    updateLocationState(type, lat, lon, shortName);
+                };
+                
+                container.appendChild(div);
+            });
+            
+            container.classList.remove('hidden');
+        }
+
+        // Regular search button click (fallback or explicit search)
         async function searchLocation(type) {
             const inputId = type === 'pickup' ? 'pickup-search' : 'dropoff-search';
             const query = document.getElementById(inputId).value;
@@ -314,6 +396,18 @@
                 showToast("Search failed. Try selecting on map.");
             }
         }
+
+        // Close suggestions when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('#pickup-custom-area') && !e.target.closest('#pickup-suggestions')) {
+                document.getElementById('pickup-suggestions').classList.add('hidden');
+            }
+            // Logic for dropoff is simpler as it's always visible in structure
+            const dropoffContainer = document.querySelector('section:nth-of-type(2)'); 
+            if (dropoffContainer && !dropoffContainer.contains(e.target)) {
+                 document.getElementById('dropoff-suggestions').classList.add('hidden');
+            }
+        });
 
         // --- UI Logic ---
         function setPickupMode(mode) {
@@ -361,7 +455,6 @@
             }
 
             // Construct Deep Link
-            // Uber Deep Link Format: https://m.uber.com/ul/?action=setPickup&client_id=...&pickup=...&dropoff=...
             let url = "https://m.uber.com/ul/?action=setPickup";
 
             // Add Pickup
@@ -406,7 +499,6 @@
         function copyLink() {
             if(!state.generatedUrl) return;
             
-            // Create temporary element to copy from (better mobile compatibility than navigator.clipboard sometimes)
             const el = document.createElement('textarea');
             el.value = state.generatedUrl;
             document.body.appendChild(el);
@@ -429,7 +521,7 @@
                     console.log('Share canceled');
                 }
             } else {
-                copyLink(); // Fallback
+                copyLink(); 
             }
         }
 
@@ -440,7 +532,7 @@
             html2canvas(card, {
                 scale: 3, // High resolution
                 backgroundColor: null,
-                useCORS: true // vital for some resources
+                useCORS: true 
             }).then(canvas => {
                 const link = document.createElement('a');
                 link.download = `uber-ride-${Date.now()}.png`;
