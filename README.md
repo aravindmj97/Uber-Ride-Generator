@@ -121,30 +121,7 @@ https://m.uber.com/ul/?action=setPickup
 
 ## 🌍 Live Demo
 
-👉 **[Deployed on Netlify]**
-*Add your Netlify URL here*
-
----
-
-## 🛠️ Local Development
-
-```bash
-git clone https://github.com/your-username/ridelink.git
-cd ridelink
-npm install
-npm run dev
-```
-
----
-
-## 📦 Deployment
-
-This project is **Netlify-ready**:
-
-1. Push to GitHub
-2. Connect repo to Netlify
-3. Build command: `npm run build`
-4. Publish directory: `dist` or `/`
+https://uber-ride-generator.vercel.app/
 
 ---
 
